@@ -2,6 +2,7 @@ import argparse
 import tempfile
 import subprocess
 import json
+import yaml
 import os
 import re
 
@@ -29,6 +30,7 @@ def write_inventory_file(hosts, outfile):
     for ii, host in enumerate(hosts):
         desc = ["host_%d" % ii,
                 "ansible_connection=ssh",
+                "ansible_python_interpreter=/usr/bin/python2",
                 "ansible_host=%s" % host['host']]
 
         if host.get('port'):
@@ -41,19 +43,26 @@ def write_inventory_file(hosts, outfile):
         print(inventory_line, file=outfile)
 
 
-def write_playbook_file(roles, outfile):
+def write_playbook_file(roles, outfile, include_files=None):
     "Write the temporary playbook file."
-    template = """---
-- hosts: hosts
-  become: true
-  roles: %s
-    """
+    base_doc = {
+        "become": True,
+        "hosts": "hosts",
+        "roles": roles
+    }
 
-    role_yaml = "[%s]" % (", ".join(
-        json.dumps(role)
-        for role in roles))
+    if include_files is None:
+        include_files = []
 
-    print(template % role_yaml, file=outfile)
+    for include_file in include_files:
+        for doc in yaml.safe_load_all(include_file):
+            for k, data in doc.items():
+                if k not in base_doc:
+                    base_doc[k] = data
+
+    output = "---\n\n%s" % yaml.safe_dump(base_doc)
+
+    print(output, file=outfile)
 
 
 def build_environment(path, hosts, roles):
@@ -65,6 +74,15 @@ def build_environment(path, hosts, roles):
     playbook_fn = os.path.join(path, "play.yml")
     with open(playbook_fn, "w") as outf:
         write_playbook_file(roles, outf)
+
+    # for role in roles:
+    #     role_name = os.path.basename(role)
+    #     role_dst = os.path.join(path, role_name)
+
+    #     if os.path.exists(role_dst):
+    #         raise ValueError("Failed to link role.")
+    #     else:
+    #         os.symlink(role, role_dst)
 
     return {
         "inventory_fn": inventory_fn,
@@ -87,7 +105,7 @@ def run_ansible(env, remaining_args):
 
 def prep_and_run(opts, remaining_args):
     with tempfile.TemporaryDirectory() as tmpdir:
-        env = build_environment(tmpdir.name,
+        env = build_environment(tmpdir,
                                 hosts=opts.hosts,
                                 roles=opts.roles)
         run_ansible(env, remaining_args)
@@ -100,6 +118,8 @@ def main():
                     help="Host descriptors")
     ap.add_argument("-d", "--directory", default="./roles",
                     help="Role directory")
+    ap.add_argument("-y", "--yaml", type=argparse.FileType("r"),
+                    help="Inject additional YAML files")
     ap.add_argument("roles", nargs="+")
 
     opts, unknown = ap.parse_known_args()
