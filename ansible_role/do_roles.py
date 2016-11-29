@@ -5,6 +5,17 @@ import json
 import yaml
 import os
 import re
+import time
+from io import StringIO
+
+
+def parse_yaml_arg(arg):
+    if arg.startswith("@"):
+        return argparse.FileType('r')(arg[1:])
+    else:
+        stream = StringIO(arg)
+
+    return stream
 
 
 def parse_host(host):
@@ -60,12 +71,12 @@ def write_playbook_file(roles, outfile, include_files=None):
                 if k not in base_doc:
                     base_doc[k] = data
 
-    output = "---\n\n%s" % yaml.safe_dump(base_doc)
+    output = "---\n\n%s" % yaml.safe_dump([base_doc])
 
     print(output, file=outfile)
 
 
-def build_environment(path, hosts, roles):
+def build_environment(path, hosts, roles, include_files=None):
     "Construct the ansible environment."
     inventory_fn = os.path.join(path, "hosts")
     with open(inventory_fn, "w") as outf:
@@ -73,7 +84,7 @@ def build_environment(path, hosts, roles):
 
     playbook_fn = os.path.join(path, "play.yml")
     with open(playbook_fn, "w") as outf:
-        write_playbook_file(roles, outf)
+        write_playbook_file(roles, outf, include_files)
 
     # for role in roles:
     #     role_name = os.path.basename(role)
@@ -95,6 +106,7 @@ def run_ansible(env, remaining_args):
     ansible_path = "ansible-playbook"
     ansible_command = [
         ansible_path,
+        "-vvv",
         "-i", env['inventory_fn'],
     ] + remaining_args + [
         env['playbook_fn']
@@ -107,7 +119,8 @@ def prep_and_run(opts, remaining_args):
     with tempfile.TemporaryDirectory() as tmpdir:
         env = build_environment(tmpdir,
                                 hosts=opts.hosts,
-                                roles=opts.roles)
+                                roles=opts.roles,
+                                include_files=opts.yaml)
         run_ansible(env, remaining_args)
 
 
@@ -118,7 +131,8 @@ def main():
                     help="Host descriptors")
     ap.add_argument("-d", "--directory", default="./roles",
                     help="Role directory")
-    ap.add_argument("-y", "--yaml", type=argparse.FileType("r"),
+    ap.add_argument("-y", "--yaml", type=parse_yaml_arg,
+                    action="append",
                     help="Inject additional YAML files")
     ap.add_argument("roles", nargs="+")
 
